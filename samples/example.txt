@@ -1,0 +1,3 @@
+Knowledge Assistant week-one sample document.
+
+This file is used to demonstrate that the CLI can copy a real source file into managed storage.

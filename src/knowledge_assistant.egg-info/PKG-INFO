@@ -1,0 +1,56 @@
+Metadata-Version: 2.4
+Name: knowledge-assistant
+Version: 0.1.0
+Summary: A learning project for building an enterprise document knowledge assistant.
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Provides-Extra: dev
+Requires-Dist: mypy>=1.15; extra == "dev"
+Requires-Dist: pytest>=8.3; extra == "dev"
+Requires-Dist: ruff>=0.11; extra == "dev"
+
+# Knowledge Assistant
+
+企业文档智能问答系统学习项目。本周先完成 Python 工程骨架和命令行文档管理工具，后续逐步接入 FastAPI、数据库、向量检索、Agent 与 MCP。
+
+## 环境要求
+
+- Python 3.11 或更高版本
+- Git
+
+## 初始化开发环境
+
+在 PowerShell 中执行：
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -e ".[dev]"
+```
+
+## 验证环境
+
+```powershell
+knowledge-assistant --help
+pytest
+ruff check .
+mypy
+```
+
+## 当前目录结构
+
+```text
+knowledge-assistant/
+├── src/knowledge_assistant/  # 应用源码
+├── tests/                    # 自动化测试
+├── data/uploads/             # 本地文档副本（不提交到 Git）
+├── docs/week01/              # 第一周学习文档
+├── pyproject.toml            # 项目与工具配置
+└── README.md
+```
+
+## 当前状态
+
+开发环境与项目骨架已建立，业务功能将在第一周学习过程中逐步实现。
+

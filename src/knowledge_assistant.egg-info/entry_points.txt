@@ -1,0 +1,2 @@
+[console_scripts]
+knowledge-assistant = knowledge_assistant.cli:main
