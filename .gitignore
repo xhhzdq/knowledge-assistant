@@ -8,6 +8,8 @@ __pycache__/
 htmlcov/
 .env
 *.log
+logs/*
+!logs/.gitkeep
 
 # Runtime data
 data/documents.json
@@ -19,4 +21,3 @@ data/uploads/*
 .vscode/
 .DS_Store
 Thumbs.db
-

@@ -13,20 +13,26 @@ class Settings:
     data_dir: Path
     uploads_dir: Path
     metadata_file: Path
+    logs_dir: Path
+    log_file: Path
 
     @classmethod
     def default(cls) -> Self:
         """Build settings relative to this project's root directory."""
         project_root = Path(__file__).resolve().parents[3]
         data_dir = project_root / "data"
+        logs_dir = project_root / "logs"
 
         return cls(
             project_root=project_root,
             data_dir=data_dir,
             uploads_dir=data_dir / "uploads",
             metadata_file=data_dir / "documents.json",
+            logs_dir=logs_dir,
+            log_file=logs_dir / "app.log",
         )
 
-    def ensure_data_directories(self) -> None:
-        """Create runtime data directories when they do not exist."""
+    def ensure_runtime_directories(self) -> None:
+        """创建应用运行时需要的数据和日志目录。"""
         self.uploads_dir.mkdir(parents=True, exist_ok=True)
+        self.logs_dir.mkdir(parents=True, exist_ok=True)

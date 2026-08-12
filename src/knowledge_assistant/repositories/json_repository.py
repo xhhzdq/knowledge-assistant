@@ -1,11 +1,14 @@
 """JSON-backed document repository."""
 
 import json
+import logging
 from pathlib import Path
 from typing import cast
 
 from knowledge_assistant.exceptions import DocumentNotFoundError, StorageError
 from knowledge_assistant.models import Document, DocumentData
+
+logger = logging.getLogger(__name__)
 
 
 class JsonDocumentRepository:
@@ -16,7 +19,9 @@ class JsonDocumentRepository:
 
     def list_all(self) -> list[Document]:
         """Return all persisted documents."""
-        return self._read_all()
+        documents = self._read_all()
+        logger.debug("读取文档元数据完成: count=%d", len(documents))
+        return documents
 
     def get_by_id(self, document_id: str) -> Document:
         """Return one document or raise when its ID is unknown."""
@@ -34,6 +39,7 @@ class JsonDocumentRepository:
 
         documents.append(document)
         self._write_all(documents)
+        logger.debug("写入文档元数据完成: id=%s", document.id)
 
     def delete(self, document_id: str) -> Document:
         """Delete document metadata and return the removed document."""
@@ -43,6 +49,7 @@ class JsonDocumentRepository:
             if document.id == document_id:
                 removed = documents.pop(index)
                 self._write_all(documents)
+                logger.debug("删除文档元数据完成: id=%s", document_id)
                 return removed
 
         raise DocumentNotFoundError(f"Document not found: {document_id}")
@@ -54,6 +61,7 @@ class JsonDocumentRepository:
         try:
             raw_data: object = json.loads(self._metadata_file.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
+            logger.error("读取文档元数据失败: file=%s", self._metadata_file)
             raise StorageError(f"Unable to read metadata: {self._metadata_file}") from exc
 
         if not isinstance(raw_data, list):
@@ -66,6 +74,7 @@ class JsonDocumentRepository:
                     raise TypeError("Each document entry must be a JSON object")
                 documents.append(Document.from_dict(cast(DocumentData, item)))
         except (KeyError, TypeError) as exc:
+            logger.error("文档元数据内容不合法: file=%s", self._metadata_file)
             raise StorageError("Document metadata contains an invalid entry") from exc
 
         return documents
@@ -83,4 +92,5 @@ class JsonDocumentRepository:
             temporary_file.replace(self._metadata_file)
         except OSError as exc:
             temporary_file.unlink(missing_ok=True)
+            logger.error("写入文档元数据失败: file=%s", self._metadata_file)
             raise StorageError(f"Unable to write metadata: {self._metadata_file}") from exc

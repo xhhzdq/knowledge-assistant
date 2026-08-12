@@ -1,5 +1,6 @@
-"""Document-management application service."""
+"""文档管理业务服务。"""
 
+import logging
 from pathlib import Path
 from shutil import copy2
 from uuid import uuid4
@@ -7,6 +8,8 @@ from uuid import uuid4
 from knowledge_assistant.exceptions import InvalidDocumentError, StorageError
 from knowledge_assistant.models import Document
 from knowledge_assistant.repositories.json_repository import JsonDocumentRepository
+
+logger = logging.getLogger(__name__)
 
 
 class DocumentService:
@@ -20,8 +23,10 @@ class DocumentService:
         """Validate and copy a source file, then persist its metadata."""
         source = source.expanduser().resolve()
         if not source.exists():
+            logger.warning("添加文档失败，源文件不存在: path=%s", source)
             raise InvalidDocumentError(f"Source file does not exist: {source}")
         if not source.is_file():
+            logger.warning("添加文档失败，源路径不是文件: path=%s", source)
             raise InvalidDocumentError(f"Source path is not a file: {source}")
 
         self._uploads_dir.mkdir(parents=True, exist_ok=True)
@@ -37,11 +42,18 @@ class DocumentService:
             self._repository.add(document)
         except OSError as exc:
             destination.unlink(missing_ok=True)
+            logger.error("复制文档失败: source=%s destination=%s", source, destination)
             raise StorageError(f"Unable to copy document: {source}") from exc
         except StorageError:
             destination.unlink(missing_ok=True)
             raise
 
+        logger.info(
+            "文档添加成功: id=%s name=%s size=%d",
+            document.id,
+            document.name,
+            document.file_size,
+        )
         return document
 
     def list_documents(self) -> list[Document]:
@@ -60,11 +72,15 @@ class DocumentService:
         try:
             stored_file.relative_to(self._uploads_dir)
         except ValueError as exc:
+            logger.error("拒绝删除 uploads 目录外的文件: path=%s", stored_file)
             raise StorageError("Refusing to delete a file outside the uploads directory") from exc
 
         try:
             stored_file.unlink(missing_ok=True)
         except OSError as exc:
+            logger.error("删除存储文件失败: path=%s", stored_file)
             raise StorageError(f"Unable to delete stored file: {stored_file}") from exc
 
-        return self._repository.delete(document_id)
+        removed = self._repository.delete(document_id)
+        logger.info("文档删除成功: id=%s name=%s", removed.id, removed.name)
+        return removed

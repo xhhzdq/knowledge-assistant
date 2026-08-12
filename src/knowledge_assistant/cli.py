@@ -1,15 +1,19 @@
 """Command-line entry point for the Knowledge Assistant."""
 
 import argparse
+import logging
 from collections.abc import Sequence
 from pathlib import Path
 from typing import NoReturn
 
 from knowledge_assistant.core.config import Settings
+from knowledge_assistant.core.logging import configure_logging
 from knowledge_assistant.exceptions import KnowledgeAssistantError
 from knowledge_assistant.models import Document
 from knowledge_assistant.repositories.json_repository import JsonDocumentRepository
 from knowledge_assistant.services.document_service import DocumentService
+
+logger = logging.getLogger(__name__)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -34,10 +38,10 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def build_service() -> DocumentService:
+def build_service(settings: Settings | None = None) -> DocumentService:
     """Build the local document service from default project settings."""
-    settings = Settings.default()
-    settings.ensure_data_directories()
+    settings = settings or Settings.default()
+    settings.ensure_runtime_directories()
     repository = JsonDocumentRepository(settings.metadata_file)
     return DocumentService(repository, settings.uploads_dir)
 
@@ -63,7 +67,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Run the command-line application."""
     parser = build_parser()
     args = parser.parse_args(argv)
-    service = build_service()
+    settings = Settings.default()
+    settings.ensure_runtime_directories()
+    configure_logging(settings.log_file)
+    service = build_service(settings)
+    logger.debug("CLI 命令开始执行: command=%s", args.command)
 
     try:
         if args.command == "add":
@@ -81,6 +89,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             document = service.delete_document(args.document_id)
             print(f"Document deleted: {document.id}")
     except KnowledgeAssistantError as exc:
+        logger.error("CLI 命令执行失败: command=%s error=%s", args.command, exc)
         exit_with_error(parser, str(exc))
 
     return 0
