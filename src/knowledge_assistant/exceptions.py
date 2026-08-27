@@ -15,3 +15,7 @@ class InvalidDocumentError(KnowledgeAssistantError):
 
 class StorageError(KnowledgeAssistantError):
     """Raised when document metadata or stored files cannot be accessed."""
+
+
+class DocumentConflictError(KnowledgeAssistantError):
+    """Raised when document data conflicts with an existing record."""

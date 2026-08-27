@@ -1,0 +1,10 @@
+本目录保存 Alembic 数据库结构迁移。
+
+常用命令：
+
+    alembic current
+    alembic history
+    alembic upgrade head
+    alembic downgrade -1
+
+数据库连接地址由 migrations/env.py 从项目 .env 的 DATABASE_URL 读取。

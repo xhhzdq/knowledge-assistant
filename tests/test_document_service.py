@@ -1,5 +1,6 @@
 """Tests for the document-management service."""
 
+from io import BytesIO
 from pathlib import Path
 
 import pytest
@@ -81,3 +82,58 @@ def test_delete_document_refuses_path_outside_uploads(tmp_path: Path) -> None:
         service.delete_document(document.id)
 
     assert source.read_text(encoding="utf-8") == "must remain"
+
+
+def test_uploaded_document_cleans_file_when_repository_add_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """数据库元数据写入失败时不能遗留已经上传的文件。"""
+    repository = JsonDocumentRepository(tmp_path / "data" / "documents.json")
+    uploads_dir = tmp_path / "data" / "uploads"
+    service = DocumentService(repository, uploads_dir)
+
+    def fail_add(*args: object) -> None:
+        raise StorageError("simulated database failure")
+
+    monkeypatch.setattr(repository, "add", fail_add)
+
+    with pytest.raises(StorageError, match="simulated database failure"):
+        service.add_uploaded_document("guide.txt", BytesIO(b"content"))
+
+    assert list(uploads_dir.iterdir()) == []
+
+
+def test_uploaded_document_cleans_file_when_size_limit_is_exceeded(tmp_path: Path) -> None:
+    """上传内容超过限制时应清理已写入的部分文件。"""
+    service = build_service(tmp_path)
+    service.MAX_UPLOAD_SIZE = 4
+
+    with pytest.raises(InvalidDocumentError, match="exceeds"):
+        service.add_uploaded_document("large.txt", BytesIO(b"12345"))
+
+    uploads_dir = tmp_path / "data" / "uploads"
+    assert list(uploads_dir.iterdir()) == []
+
+
+def test_delete_restores_file_when_repository_delete_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """元数据删除失败时应把暂存文件恢复到原路径。"""
+    source = tmp_path / "source.txt"
+    source.write_text("must be restored", encoding="utf-8")
+    repository = JsonDocumentRepository(tmp_path / "data" / "documents.json")
+    service = DocumentService(repository, tmp_path / "data" / "uploads")
+    document = service.add_document(source)
+
+    def fail_delete(*args: object) -> None:
+        raise StorageError("simulated database failure")
+
+    monkeypatch.setattr(repository, "delete", fail_delete)
+
+    with pytest.raises(StorageError, match="simulated database failure"):
+        service.delete_document(document.id)
+
+    assert Path(document.stored_path).read_text(encoding="utf-8") == "must be restored"
+    assert repository.get_by_id(document.id) == document

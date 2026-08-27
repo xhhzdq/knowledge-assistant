@@ -68,6 +68,20 @@ def test_delete_removes_persisted_document(tmp_path: Path) -> None:
     assert repository.list_all() == []
 
 
+def test_update_replaces_persisted_document(tmp_path: Path) -> None:
+    """更新后重新创建 Repository 也应读取到新数据。"""
+    metadata_file = tmp_path / "documents.json"
+    repository = JsonDocumentRepository(metadata_file)
+    original = make_document()
+    repository.add(original)
+    updated = Document(**{**original.to_dict(), "name": "updated.txt", "status": "ready"})
+
+    result = repository.update(updated)
+
+    assert result == updated
+    assert JsonDocumentRepository(metadata_file).get_by_id(original.id) == updated
+
+
 def test_invalid_json_raises_storage_error(tmp_path: Path) -> None:
     """Corrupted metadata should not be treated as an empty repository."""
     metadata_file = tmp_path / "documents.json"

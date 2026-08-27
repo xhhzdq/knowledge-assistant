@@ -5,7 +5,11 @@ import logging
 from pathlib import Path
 from typing import cast
 
-from knowledge_assistant.exceptions import DocumentNotFoundError, StorageError
+from knowledge_assistant.exceptions import (
+    DocumentConflictError,
+    DocumentNotFoundError,
+    StorageError,
+)
 from knowledge_assistant.models import Document, DocumentData
 
 logger = logging.getLogger(__name__)
@@ -23,6 +27,14 @@ class JsonDocumentRepository:
         logger.debug("读取文档元数据完成: count=%d", len(documents))
         return documents
 
+    def list_page(self, offset: int, limit: int) -> list[Document]:
+        """分页返回 JSON 文件中的文档。"""
+        return self._read_all()[offset : offset + limit]
+
+    def count(self) -> int:
+        """返回 JSON 文件中的文档总数。"""
+        return len(self._read_all())
+
     def get_by_id(self, document_id: str) -> Document:
         """Return one document or raise when its ID is unknown."""
         for document in self._read_all():
@@ -35,11 +47,23 @@ class JsonDocumentRepository:
         """Append document metadata to the JSON file."""
         documents = self._read_all()
         if any(existing.id == document.id for existing in documents):
-            raise StorageError(f"Duplicate document ID: {document.id}")
+            raise DocumentConflictError(f"Duplicate document ID: {document.id}")
 
         documents.append(document)
         self._write_all(documents)
         logger.debug("写入文档元数据完成: id=%s", document.id)
+
+    def update(self, document: Document) -> Document:
+        """替换已有文档元数据并返回更新结果。"""
+        documents = self._read_all()
+        for index, existing in enumerate(documents):
+            if existing.id == document.id:
+                documents[index] = document
+                self._write_all(documents)
+                logger.debug("更新文档元数据完成: id=%s", document.id)
+                return document
+
+        raise DocumentNotFoundError(f"Document not found: {document.id}")
 
     def delete(self, document_id: str) -> Document:
         """Delete document metadata and return the removed document."""
