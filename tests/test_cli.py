@@ -54,7 +54,7 @@ def test_cli_document_lifecycle(
 
     assert document_id
     assert settings.metadata_file.exists()
-    assert len(list(settings.uploads_dir.glob("*学习资料.txt"))) == 1
+    assert len(list(settings.uploads_dir.glob("documents/*.txt"))) == 1
 
     assert cli.main(["list"]) == 0
     list_output = capsys.readouterr().out
@@ -71,7 +71,7 @@ def test_cli_document_lifecycle(
     assert cli.main(["delete", document_id]) == 0
     delete_output = capsys.readouterr().out
     assert f"Document deleted: {document_id}" in delete_output
-    assert list(settings.uploads_dir.glob("*学习资料.txt")) == []
+    assert list(settings.uploads_dir.glob("documents/*.txt")) == []
 
     assert cli.main(["list"]) == 0
     assert capsys.readouterr().out.strip() == "No documents found."

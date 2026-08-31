@@ -1,12 +1,15 @@
 # Knowledge Assistant
 
-企业文档智能问答系统学习项目。目前已经完成 Python 工程骨架、命令行文档管理工具，以及基于 FastAPI、PostgreSQL、SQLAlchemy 和 Alembic 的文档 CRUD API。后续将逐步接入 Redis、容器化、文档解析、向量检索、Agent 与 MCP。
+企业文档智能问答系统学习项目。目前已经完成 Python 工程骨架、命令行工具、FastAPI + PostgreSQL 文档 CRUD、MinIO 原文件存储，以及 Redis Cache Aside 文档详情缓存。下一步完成四服务 Docker Compose，随后进入文档解析、向量检索、知识图谱、RAG、Agent 与 MCP。
+
+项目的产品功能、目标架构和实施顺序见：[知识助手功能目标与技术路线](docs/知识助手功能目标与技术路线.md)。
 
 ## 环境要求
 
 - Python 3.11 或更高版本
 - Git
 - PostgreSQL 17（本地开发阶段）
+- Docker Engine 和 Docker Compose plugin（四服务部署阶段）
 
 ## 初始化开发环境
 
@@ -75,21 +78,38 @@ uvicorn knowledge_assistant.api.main:app --reload
 | `PATCH` | `/api/v1/documents/{id}` | 修改文档名称或处理状态 |
 | `DELETE` | `/api/v1/documents/{id}` | 删除文件及数据库元数据 |
 
+## Docker Compose 启动四个服务
+
+准备 `.env` 后执行：
+
+```bash
+docker compose config --quiet
+docker compose up -d --build
+docker compose ps
+```
+
+Compose 会依次准备 PostgreSQL、执行 Alembic、准备 MinIO Bucket 与应用账号、启动 Redis，最后启动 FastAPI。详细说明见：[Docker Compose 四服务编排](docs/week03/DockerCompose四服务编排.md)。
+
 ## 当前目录结构
 
 ```text
 knowledge-assistant/
 ├── src/knowledge_assistant/  # 应用源码
 │   ├── api/                  # FastAPI 入口、依赖和路由
+│   ├── cache/                # 文档缓存接口，第三周接入 Redis
 │   ├── db/                   # SQLAlchemy ORM、Engine 和 Session
 │   ├── repositories/         # JSON 与 SQLAlchemy Repository
 │   ├── schemas/              # Pydantic 请求/响应模型
-│   └── services/             # 文档业务逻辑
+│   ├── services/             # 文档业务逻辑
+│   └── storage/              # 原文件存储接口，第三周接入 MinIO
 ├── migrations/               # Alembic 数据库迁移
 ├── tests/                    # 自动化测试
 ├── data/uploads/             # 本地文档副本（不提交到 Git）
 ├── docs/week01/              # 第一周学习文档
 ├── docs/week02/              # 第二周 Web 与关系数据库文档
+├── docs/week03/              # 第三周对象存储、缓存和容器文档
+├── Dockerfile                # FastAPI 应用镜像
+├── compose.yaml              # API、PostgreSQL、MinIO、Redis 完整编排
 ├── pyproject.toml            # 项目与工具配置
 └── README.md
 ```

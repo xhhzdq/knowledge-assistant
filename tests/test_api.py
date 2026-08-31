@@ -12,6 +12,7 @@ from knowledge_assistant.api.main import app
 from knowledge_assistant.models import Document
 from knowledge_assistant.repositories.json_repository import JsonDocumentRepository
 from knowledge_assistant.services.document_service import DocumentService
+from knowledge_assistant.storage.local_storage import LocalDocumentStorage
 
 client = TestClient(app)
 
@@ -20,7 +21,8 @@ client = TestClient(app)
 def document_service(tmp_path: Path) -> Iterator[DocumentService]:
     """通过依赖覆盖为 API 测试提供隔离的文档服务。"""
     repository = JsonDocumentRepository(tmp_path / "data" / "documents.json")
-    service = DocumentService(repository, tmp_path / "data" / "uploads")
+    storage = LocalDocumentStorage(tmp_path / "data" / "uploads")
+    service = DocumentService(repository, storage)
     app.dependency_overrides[get_document_service] = lambda: service
 
     yield service

@@ -2,6 +2,7 @@
 
 from collections.abc import Iterator
 from pathlib import Path
+from shutil import rmtree
 
 import pytest
 from alembic import command
@@ -20,6 +21,7 @@ from knowledge_assistant.repositories.sqlalchemy_repository import (
     SqlAlchemyDocumentRepository,
 )
 from knowledge_assistant.services.document_service import DocumentService
+from knowledge_assistant.storage.local_storage import LocalDocumentStorage
 
 
 @pytest.fixture(scope="module")
@@ -58,7 +60,8 @@ def database_api_environment(
     def override_document_service() -> Iterator[DocumentService]:
         with session_factory() as session:
             repository = SqlAlchemyDocumentRepository(session)
-            yield DocumentService(repository, uploads_dir)
+            storage = LocalDocumentStorage(uploads_dir)
+            yield DocumentService(repository, storage)
 
     app.dependency_overrides[get_document_service] = override_document_service
 
@@ -82,21 +85,27 @@ def clean_database_api_state(
     with engine.begin() as connection:
         connection.execute(delete(DocumentORM))
     for uploaded_file in uploads_dir.iterdir():
-        uploaded_file.unlink()
+        if uploaded_file.is_dir():
+            rmtree(uploaded_file)
+        else:
+            uploaded_file.unlink()
 
     yield
 
     with engine.begin() as connection:
         connection.execute(delete(DocumentORM))
     for uploaded_file in uploads_dir.iterdir():
-        uploaded_file.unlink()
+        if uploaded_file.is_dir():
+            rmtree(uploaded_file)
+        else:
+            uploaded_file.unlink()
 
 
 def test_document_http_lifecycle_uses_postgresql(
     database_api_environment: tuple[TestClient, Engine, Path],
 ) -> None:
     """上传、列表、详情和删除应经过 PostgreSQL 完成完整生命周期。"""
-    client, engine, _ = database_api_environment
+    client, engine, uploads_dir = database_api_environment
     upload_response = client.post(
         "/api/v1/documents",
         files={"file": ("学习笔记.txt", "你好，PostgreSQL".encode(), "text/plain")},
@@ -113,7 +122,7 @@ def test_document_http_lifecycle_uses_postgresql(
     session_factory = create_session_factory(engine)
     with session_factory() as session:
         stored = SqlAlchemyDocumentRepository(session).get_by_id(uploaded["id"])
-        stored_file = Path(stored.stored_path)
+        stored_file = uploads_dir / stored.stored_path
         assert stored_file.exists()
 
     list_response = client.get(

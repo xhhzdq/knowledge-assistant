@@ -12,6 +12,7 @@ from knowledge_assistant.exceptions import KnowledgeAssistantError
 from knowledge_assistant.models import Document
 from knowledge_assistant.repositories.json_repository import JsonDocumentRepository
 from knowledge_assistant.services.document_service import DocumentService
+from knowledge_assistant.storage.local_storage import LocalDocumentStorage
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,11 @@ def build_service(settings: Settings | None = None) -> DocumentService:
     settings = settings or Settings.default()
     settings.ensure_runtime_directories()
     repository = JsonDocumentRepository(settings.metadata_file)
-    return DocumentService(repository, settings.uploads_dir)
+    storage = LocalDocumentStorage(
+        upload_dir=settings.uploads_dir,
+        max_file_size=10 * 1024 * 1024,  # 10MB
+    )
+    return DocumentService(repository, storage)
 
 
 def print_document(document: Document) -> None:

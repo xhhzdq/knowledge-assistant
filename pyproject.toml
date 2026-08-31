@@ -11,9 +11,11 @@ requires-python = ">=3.11"
 dependencies = [
     "alembic>=1.14",
     "fastapi>=0.116",
+    "minio>=7.2,<8.0",
     "psycopg[binary]>=3.2",
     "pydantic-settings>=2.0",
     "python-multipart>=0.0.20",
+    "redis>=8.1,<9.0",
     "sqlalchemy>=2.0",
     "uvicorn>=0.35",
 ]

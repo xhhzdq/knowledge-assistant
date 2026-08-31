@@ -1,0 +1,170 @@
+name: knowledge-assistant
+
+x-api-image: &api-image
+  image: ${API_IMAGE:-knowledge-assistant-api:week03}
+  build:
+    context: .
+    dockerfile: Dockerfile
+
+x-database-environment: &database-environment
+  DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:?请在 .env 中设置 POSTGRES_USER}:${POSTGRES_PASSWORD:?请在 .env 中设置 POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:?请在 .env 中设置 POSTGRES_DB}
+  TEST_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:?请在 .env 中设置 POSTGRES_USER}:${POSTGRES_PASSWORD:?请在 .env 中设置 POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_TEST_DB:-knowledge_assistant_test}
+
+services:
+  postgres:
+    image: ${POSTGRES_IMAGE:-postgres:17.6-alpine3.22}
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?请在 .env 中设置 POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 中设置 POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:?请在 .env 中设置 POSTGRES_DB}
+    ports:
+      - "${COMPOSE_BIND_ADDRESS:-127.0.0.1}:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  minio:
+    image: ${MINIO_IMAGE:-minio/minio:RELEASE.2025-09-07T16-13-09Z}
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?请在 .env 中设置 MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?请在 .env 中设置 MINIO_ROOT_PASSWORD}
+    ports:
+      - "${COMPOSE_BIND_ADDRESS:-127.0.0.1}:${MINIO_API_PORT:-9000}:9000"
+      - "${COMPOSE_BIND_ADDRESS:-127.0.0.1}:${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  # 一次性初始化任务：创建 Bucket、应用账号及仅访问该 Bucket 的权限策略。
+  minio-init:
+    image: ${MINIO_MC_IMAGE:-minio/mc:RELEASE.2025-08-13T08-35-41Z}
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        set -eu
+        mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"
+        mc mb --ignore-existing "local/$${MINIO_BUCKET}"
+
+        cat > /tmp/knowledge-app-policy.json <<EOF
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": ["s3:ListBucket", "s3:GetBucketLocation"],
+              "Resource": ["arn:aws:s3:::$${MINIO_BUCKET}"]
+            },
+            {
+              "Effect": "Allow",
+              "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+              "Resource": ["arn:aws:s3:::$${MINIO_BUCKET}/*"]
+            }
+          ]
+        }
+        EOF
+
+        mc admin policy info local knowledge-app >/dev/null 2>&1 || \
+          mc admin policy create local knowledge-app /tmp/knowledge-app-policy.json
+        mc admin user info local "$${MINIO_ACCESS_KEY}" >/dev/null 2>&1 || \
+          mc admin user add local "$${MINIO_ACCESS_KEY}" "$${MINIO_SECRET_KEY}"
+        mc admin policy attach local knowledge-app --user "$${MINIO_ACCESS_KEY}"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?请在 .env 中设置 MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?请在 .env 中设置 MINIO_ROOT_PASSWORD}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?请在 .env 中设置 MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?请在 .env 中设置 MINIO_SECRET_KEY}
+      MINIO_BUCKET: ${MINIO_BUCKET:-knowledge}
+    depends_on:
+      minio:
+        condition: service_healthy
+    restart: "no"
+
+  redis:
+    image: ${REDIS_IMAGE:-redis:7.4.11-alpine3.21}
+    command:
+      - /bin/sh
+      - -c
+      - exec redis-server --appendonly yes --requirepass "$${REDIS_PASSWORD}"
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?请在 .env 中设置 REDIS_PASSWORD}
+    ports:
+      - "${COMPOSE_BIND_ADDRESS:-127.0.0.1}:${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - REDISCLI_AUTH="$${REDIS_PASSWORD}" redis-cli ping | grep -q PONG
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    restart: unless-stopped
+
+  # 一次性迁移任务。只有升级成功，API 才会启动。
+  migrate:
+    <<: *api-image
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      <<: *database-environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    <<: *api-image
+    environment:
+      <<: *database-environment
+      DOCUMENT_STORAGE_BACKEND: minio
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?请在 .env 中设置 MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?请在 .env 中设置 MINIO_SECRET_KEY}
+      MINIO_BUCKET: ${MINIO_BUCKET:-knowledge}
+      MINIO_SECURE: "false"
+      MINIO_MAX_FILE_SIZE: ${MINIO_MAX_FILE_SIZE:-10485760}
+      REDIS_URL: redis://:${REDIS_PASSWORD:?请在 .env 中设置 REDIS_PASSWORD}@redis:6379/0
+      DOCUMENT_CACHE_TTL_SECONDS: ${DOCUMENT_CACHE_TTL_SECONDS:-300}
+      REDIS_CONNECT_TIMEOUT_SECONDS: ${REDIS_CONNECT_TIMEOUT_SECONDS:-1}
+      REDIS_SOCKET_TIMEOUT_SECONDS: ${REDIS_SOCKET_TIMEOUT_SECONDS:-1}
+    ports:
+      - "${COMPOSE_BIND_ADDRESS:-127.0.0.1}:${API_PORT:-8000}:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  minio_data:
+  redis_data:
