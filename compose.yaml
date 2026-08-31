@@ -5,6 +5,8 @@ x-api-image: &api-image
   build:
     context: .
     dockerfile: Dockerfile
+    args:
+      PIP_INDEX_URL: ${PIP_INDEX_URL:-https://pypi.org/simple}
 
 x-database-environment: &database-environment
   DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:?请在 .env 中设置 POSTGRES_USER}:${POSTGRES_PASSWORD:?请在 .env 中设置 POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:?请在 .env 中设置 POSTGRES_DB}

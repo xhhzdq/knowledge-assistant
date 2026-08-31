@@ -86,6 +86,14 @@ MINIO_SECRET_KEY=替换为MinIO应用账号密码
 REDIS_PASSWORD=替换为Redis密码
 ```
 
+如果服务器无法直连 PyPI，但可访问清华镜像，还需要在 `.env` 设置：
+
+```dotenv
+PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+```
+
+该值只在构建 API 镜像时作为 Dockerfile 的 `ARG` 使用，不会成为应用运行时环境变量。
+
 默认 `COMPOSE_BIND_ADDRESS=127.0.0.1`，只允许服务器本机访问映射端口。若确实需要从局域网访问 API 和 MinIO 控制台，可改为服务器内网 IP，或在完成防火墙限制后改成 `0.0.0.0`。不要直接把数据库和 Redis 暴露到公网。
 
 ## 7. 常用命令

@@ -1,5 +1,7 @@
 FROM python:3.11-slim
 
+ARG PIP_INDEX_URL=https://pypi.org/simple
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
@@ -9,7 +11,10 @@ WORKDIR /app
 # 先复制依赖声明，业务代码变化时可以复用依赖安装层缓存。
 COPY pyproject.toml README.md ./
 COPY src ./src
-RUN python -m pip install --upgrade pip && python -m pip install .
+# PIP_INDEX_URL 可由 Compose 的 .env 覆盖，解决服务器无法直连 PyPI 的问题。
+# 使用 ARG 而非 ENV，避免把构建阶段的镜像地址带入最终运行环境。
+RUN python -m pip install --index-url "$PIP_INDEX_URL" --upgrade pip \
+    && python -m pip install --index-url "$PIP_INDEX_URL" .
 
 # Alembic 在容器中执行迁移时需要这些文件。
 COPY alembic.ini ./
