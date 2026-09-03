@@ -1,5 +1,6 @@
 """MinIO 对象存储 Adapter。"""
 
+import logging
 import mimetypes
 from pathlib import PurePosixPath
 from tempfile import SpooledTemporaryFile
@@ -12,11 +13,23 @@ from urllib3.exceptions import HTTPError
 from knowledge_assistant.exceptions import StorageError
 from knowledge_assistant.storage.base import DocumentStorage, StoredObject
 
+logger = logging.getLogger(__name__)
+
 
 class ObjectWriteResult(Protocol):
     """只描述上传结果中本项目实际使用的字段。"""
 
     etag: str
+
+
+class ObjectReadResponse(Protocol):
+    """MinIO ``get_object`` 返回的流式 HTTP 响应最小接口。"""
+
+    def read(self) -> bytes: ...
+
+    def close(self) -> None: ...
+
+    def release_conn(self) -> None: ...
 
 
 class MinioClient(Protocol):
@@ -34,6 +47,8 @@ class MinioClient(Protocol):
     def remove_object(self, bucket_name: str, object_name: str) -> None: ...
 
     def stat_object(self, bucket_name: str, object_name: str) -> object: ...
+
+    def get_object(self, bucket_name: str, object_name: str) -> ObjectReadResponse: ...
 
 
 class MinioDocumentStorage(DocumentStorage):
@@ -97,6 +112,34 @@ class MinioDocumentStorage(DocumentStorage):
             file_size=file_size,
             etag=result.etag,
         )
+
+    def read(self, object_key: str) -> bytes:
+        """读取完整对象，并在所有响应路径释放 HTTP 连接。"""
+        response: ObjectReadResponse | None = None
+        try:
+            response = self._client.get_object(self.bucket_name, object_key)
+            return response.read()
+        except S3Error as exc:
+            if exc.code in {"NoSuchKey", "NoSuchObject", "NotFound"}:
+                raise StorageError(f"MinIO object not found: {object_key}") from exc
+            raise StorageError(f"Unable to read MinIO object: {object_key}") from exc
+        except (MinioException, HTTPError, OSError) as exc:
+            raise StorageError(f"Unable to read MinIO object: {object_key}") from exc
+        finally:
+            if response is not None:
+                self._release_response(response, object_key)
+
+    @staticmethod
+    def _release_response(response: ObjectReadResponse, object_key: str) -> None:
+        """尽最大努力关闭响应并归还连接，且不覆盖原始读取异常。"""
+        try:
+            response.close()
+        except (HTTPError, OSError):
+            logger.warning("关闭 MinIO 响应失败: object_key=%s", object_key)
+        try:
+            response.release_conn()
+        except (HTTPError, OSError):
+            logger.warning("释放 MinIO 连接失败: object_key=%s", object_key)
 
     def delete(self, object_key: str) -> None:
         """删除对象；S3 的单对象删除对不存在的 Key 保持幂等。"""

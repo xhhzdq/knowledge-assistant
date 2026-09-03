@@ -20,6 +20,10 @@ class DocumentStorage(Protocol):
         """保存文件流并返回对象 Key、大小等信息。"""
         ...
 
+    def read(self, object_key: str) -> bytes:
+        """读取对象的完整字节内容。"""
+        ...
+
     def delete(self, object_key: str) -> None:
         """删除指定对象；对象不存在时由具体实现定义幂等行为。"""
         ...

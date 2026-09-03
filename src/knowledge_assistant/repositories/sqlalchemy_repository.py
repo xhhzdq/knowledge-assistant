@@ -103,6 +103,14 @@ class SqlAlchemyDocumentRepository:
             row.file_type = document.file_type
             row.file_size = document.file_size
             row.status = document.status
+            row.updated_at = self._parse_datetime(document.updated_at, "updated_at")
+            row.processing_version = document.processing_version
+            row.content_hash = document.content_hash
+            row.processed_at = self._parse_optional_datetime(
+                document.processed_at,
+                "processed_at",
+            )
+            row.processing_error = document.processing_error
             self._session.commit()
         except DocumentNotFoundError:
             self._session.rollback()
@@ -158,7 +166,21 @@ class SqlAlchemyDocumentRepository:
             file_type=document.file_type,
             file_size=document.file_size,
             status=document.status,
-            created_at=SqlAlchemyDocumentRepository._parse_created_at(document.created_at),
+            created_at=SqlAlchemyDocumentRepository._parse_datetime(
+                document.created_at,
+                "created_at",
+            ),
+            updated_at=SqlAlchemyDocumentRepository._parse_datetime(
+                document.updated_at,
+                "updated_at",
+            ),
+            processing_version=document.processing_version,
+            content_hash=document.content_hash,
+            processed_at=SqlAlchemyDocumentRepository._parse_optional_datetime(
+                document.processed_at,
+                "processed_at",
+            ),
+            processing_error=document.processing_error,
         )
 
     @staticmethod
@@ -167,6 +189,12 @@ class SqlAlchemyDocumentRepository:
         created_at = row.created_at
         if created_at.tzinfo is None:
             created_at = created_at.replace(tzinfo=UTC)
+        updated_at = row.updated_at
+        if updated_at.tzinfo is None:
+            updated_at = updated_at.replace(tzinfo=UTC)
+        processed_at = row.processed_at
+        if processed_at is not None and processed_at.tzinfo is None:
+            processed_at = processed_at.replace(tzinfo=UTC)
 
         return Document(
             id=str(row.id),
@@ -177,12 +205,25 @@ class SqlAlchemyDocumentRepository:
             file_size=row.file_size,
             status=row.status,
             created_at=created_at.astimezone(UTC).isoformat(),
+            updated_at=updated_at.astimezone(UTC).isoformat(),
+            processing_version=row.processing_version,
+            content_hash=row.content_hash,
+            processed_at=(
+                processed_at.astimezone(UTC).isoformat() if processed_at is not None else None
+            ),
+            processing_error=row.processing_error,
         )
 
     @staticmethod
-    def _parse_created_at(created_at: str) -> datetime:
-        """把领域层 ISO 8601 字符串转换为带时区 datetime。"""
-        value = datetime.fromisoformat(created_at)
+    def _parse_datetime(raw_value: str, field_name: str) -> datetime:
+        """把领域层 ISO 8601 字符串转换为 UTC datetime。"""
+        value = datetime.fromisoformat(raw_value)
         if value.tzinfo is None:
-            raise StorageError("Document created_at must include a timezone")
-        return value
+            raise StorageError(f"Document {field_name} must include a timezone")
+        return value.astimezone(UTC)
+
+    @staticmethod
+    def _parse_optional_datetime(raw_value: str | None, field_name: str) -> datetime | None:
+        if raw_value is None:
+            return None
+        return SqlAlchemyDocumentRepository._parse_datetime(raw_value, field_name)

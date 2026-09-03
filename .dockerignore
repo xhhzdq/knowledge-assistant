@@ -14,6 +14,8 @@ htmlcov
 *.log
 logs
 data
+models
+volumes
 docs
 tests
 .idea

@@ -16,12 +16,34 @@ class FakeWriteResult:
     etag = "fake-etag"
 
 
+class FakeReadResponse:
+    """记录流式响应是否被关闭并归还连接。"""
+
+    def __init__(self, content: bytes, *, fail_read: bool = False) -> None:
+        self.content = content
+        self.fail_read = fail_read
+        self.closed = False
+        self.released = False
+
+    def read(self) -> bytes:
+        if self.fail_read:
+            raise OSError("response interrupted")
+        return self.content
+
+    def close(self) -> None:
+        self.closed = True
+
+    def release_conn(self) -> None:
+        self.released = True
+
+
 class FakeMinioClient:
     """只在内存中记录对象的 MinIO 假客户端。"""
 
     def __init__(self) -> None:
         self.objects: dict[tuple[str, str], bytes] = {}
         self.last_content_type: str | None = None
+        self.read_responses: list[FakeReadResponse] = []
 
     def put_object(
         self,
@@ -51,6 +73,24 @@ class FakeMinioClient:
                 object_name,
             )
         return object()
+
+    def get_object(self, bucket_name: str, object_name: str) -> FakeReadResponse:
+        try:
+            content = self.objects[(bucket_name, object_name)]
+        except KeyError as exc:
+            raise S3Error(
+                cast("object", object()),
+                "NoSuchKey",
+                "missing",
+                object_name,
+                "request-id",
+                "host-id",
+                bucket_name,
+                object_name,
+            ) from exc
+        response = FakeReadResponse(content)
+        self.read_responses.append(response)
+        return response
 
 
 @pytest.fixture
@@ -87,6 +127,36 @@ def test_save_rejects_oversized_file_before_upload(
         storage.save("large.txt", BytesIO(b"x" * 1025))
 
     assert client.objects == {}
+
+
+def test_read_returns_exact_bytes_and_releases_response(
+    storage: MinioDocumentStorage,
+    client: FakeMinioClient,
+) -> None:
+    content = b"binary\x00content\xff"
+    result = storage.save("guide.bin", BytesIO(content))
+
+    assert storage.read(result.object_key) == content
+    response = client.read_responses[-1]
+    assert response.closed is True
+    assert response.released is True
+
+
+def test_read_empty_object_returns_empty_bytes_and_releases_response(
+    storage: MinioDocumentStorage,
+    client: FakeMinioClient,
+) -> None:
+    result = storage.save("empty.txt", BytesIO(b""))
+
+    assert storage.read(result.object_key) == b""
+    response = client.read_responses[-1]
+    assert response.closed is True
+    assert response.released is True
+
+
+def test_read_missing_object_raises_storage_error(storage: MinioDocumentStorage) -> None:
+    with pytest.raises(StorageError, match="MinIO object not found"):
+        storage.read("documents/missing.txt")
 
 
 def test_exists_and_delete_are_idempotent(
@@ -129,8 +199,44 @@ class FailingMinioClient(FakeMinioClient):
         raise OSError("network unavailable")
 
 
+class InterruptedReadMinioClient(FakeMinioClient):
+    """返回一个在读取时失败、但仍必须释放的响应。"""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.response = FakeReadResponse(b"partial", fail_read=True)
+
+    def get_object(self, bucket_name: str, object_name: str) -> FakeReadResponse:
+        return self.response
+
+
+class FailingGetMinioClient(FakeMinioClient):
+    """模拟建立对象下载连接时发生网络异常。"""
+
+    def get_object(self, bucket_name: str, object_name: str) -> FakeReadResponse:
+        raise OSError("network unavailable")
+
+
 def test_sdk_failure_is_converted_to_storage_error() -> None:
     storage = MinioDocumentStorage(FailingMinioClient(), "knowledge")
 
     with pytest.raises(StorageError, match="Unable to upload MinIO object"):
         storage.save("guide.txt", BytesIO(b"content"))
+
+
+def test_read_failure_releases_response_and_converts_error() -> None:
+    client = InterruptedReadMinioClient()
+    storage = MinioDocumentStorage(client, "knowledge")
+
+    with pytest.raises(StorageError, match="Unable to read MinIO object"):
+        storage.read("documents/guide.txt")
+
+    assert client.response.closed is True
+    assert client.response.released is True
+
+
+def test_get_object_network_failure_is_converted_to_storage_error() -> None:
+    storage = MinioDocumentStorage(FailingGetMinioClient(), "knowledge")
+
+    with pytest.raises(StorageError, match="Unable to read MinIO object"):
+        storage.read("documents/guide.txt")

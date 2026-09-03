@@ -110,6 +110,10 @@ def test_list_documents_paginates_and_hides_internal_paths(
             "file_size": 128,
             "status": "uploaded",
             "created_at": "2026-08-12T10:00:00+00:00",
+            "updated_at": "2026-08-12T10:00:00+00:00",
+            "processing_version": 0,
+            "processed_at": None,
+            "processing_error": None,
         }
     ]
     assert "original_path" not in body["items"][0]
@@ -154,6 +158,10 @@ def test_get_document_returns_document_and_hides_internal_paths(
         "file_size": 128,
         "status": "uploaded",
         "created_at": "2026-08-12T10:00:00+00:00",
+        "updated_at": "2026-08-12T10:00:00+00:00",
+        "processing_version": 0,
+        "processed_at": None,
+        "processing_error": None,
     }
     assert "original_path" not in response.json()
     assert "stored_path" not in response.json()

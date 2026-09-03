@@ -19,3 +19,23 @@ class StorageError(KnowledgeAssistantError):
 
 class DocumentConflictError(KnowledgeAssistantError):
     """Raised when document data conflicts with an existing record."""
+
+
+class DocumentParsingError(KnowledgeAssistantError):
+    """Raised when a supported document cannot be decoded or parsed."""
+
+
+class UnsupportedDocumentTypeError(DocumentParsingError):
+    """Raised when no parser supports the document extension."""
+
+
+class NoExtractableTextError(DocumentParsingError):
+    """Raised when parsing succeeds structurally but yields no usable text."""
+
+
+class OcrError(KnowledgeAssistantError):
+    """Raised when OCR is required but unavailable or inference fails."""
+
+
+class EmbeddingError(KnowledgeAssistantError):
+    """Raised when an embedding model cannot load or returns invalid vectors."""

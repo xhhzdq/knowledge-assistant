@@ -16,6 +16,10 @@ class DocumentResponse(BaseModel):
     file_size: int = Field(ge=0, description="文件大小，单位为字节")
     status: str = Field(description="文档处理状态")
     created_at: str = Field(description="ISO 8601 格式的 UTC 创建时间")
+    updated_at: str = Field(description="ISO 8601 格式的 UTC 更新时间")
+    processing_version: int = Field(ge=0, description="当前文档处理版本")
+    processed_at: str | None = Field(default=None, description="最近处理成功时间")
+    processing_error: str | None = Field(default=None, description="安全的处理失败摘要")
 
 
 class DocumentListResponse(BaseModel):

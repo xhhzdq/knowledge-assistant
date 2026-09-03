@@ -14,7 +14,7 @@ COPY src ./src
 # PIP_INDEX_URL 可由 Compose 的 .env 覆盖，解决服务器无法直连 PyPI 的问题。
 # 使用 ARG 而非 ENV，避免把构建阶段的镜像地址带入最终运行环境。
 RUN python -m pip install --index-url "$PIP_INDEX_URL" --upgrade pip \
-    && python -m pip install --index-url "$PIP_INDEX_URL" .
+    && python -m pip install --index-url "$PIP_INDEX_URL" ".[embedding,ocr]"
 
 # Alembic 在容器中执行迁移时需要这些文件。
 COPY alembic.ini ./
@@ -22,8 +22,8 @@ COPY migrations ./migrations
 
 RUN addgroup --system app \
     && adduser --system --ingroup app app \
-    && mkdir -p /app/data/uploads /app/logs \
-    && chown -R app:app /app
+    && mkdir -p /app/data/uploads /app/logs /models \
+    && chown -R app:app /app /models
 
 # 应用进程不需要 root 权限；数据库迁移同样使用该用户执行。
 USER app

@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Self, TypedDict
+from typing import NotRequired, Self, TypedDict
 from uuid import uuid4
 
 
@@ -18,6 +18,11 @@ class DocumentData(TypedDict):
     file_size: int
     status: str
     created_at: str
+    updated_at: NotRequired[str]
+    processing_version: NotRequired[int]
+    content_hash: NotRequired[str | None]
+    processed_at: NotRequired[str | None]
+    processing_error: NotRequired[str | None]
 
 
 @dataclass
@@ -32,6 +37,18 @@ class Document:
     file_size: int
     status: str
     created_at: str
+    updated_at: str = ""
+    processing_version: int = 0
+    content_hash: str | None = None
+    processed_at: str | None = None
+    processing_error: str | None = None
+
+    def __post_init__(self) -> None:
+        """补齐旧调用方未提供的更新时间，并校验处理版本。"""
+        if not self.updated_at:
+            self.updated_at = self.created_at
+        if self.processing_version < 0:
+            raise ValueError("processing_version must be non-negative")
 
     def to_dict(self) -> DocumentData:
         """Convert this document into a dictionary suitable for JSON encoding."""
@@ -44,6 +61,11 @@ class Document:
             "file_size": self.file_size,
             "status": self.status,
             "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "processing_version": self.processing_version,
+            "content_hash": self.content_hash,
+            "processed_at": self.processed_at,
+            "processing_error": self.processing_error,
         }
 
     @classmethod
@@ -58,6 +80,11 @@ class Document:
             file_size=data["file_size"],
             status=data["status"],
             created_at=data["created_at"],
+            updated_at=data.get("updated_at", data["created_at"]),
+            processing_version=data.get("processing_version", 0),
+            content_hash=data.get("content_hash"),
+            processed_at=data.get("processed_at"),
+            processing_error=data.get("processing_error"),
         )
 
     @classmethod
@@ -65,6 +92,7 @@ class Document:
         """Create document metadata and fill the application-managed fields."""
         source_path = Path(original_path)
 
+        now = datetime.now(UTC).isoformat()
         return cls(
             id=str(uuid4()),
             name=source_path.name,
@@ -73,5 +101,6 @@ class Document:
             file_type=source_path.suffix.lower(),
             file_size=file_size,
             status="uploaded",
-            created_at=datetime.now(UTC).isoformat(),
+            created_at=now,
+            updated_at=now,
         )

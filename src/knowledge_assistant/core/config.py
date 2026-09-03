@@ -2,10 +2,21 @@
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Self
+from typing import Annotated, Literal, Self
 
-from pydantic import Field
+from pydantic import AnyHttpUrl, Field, StringConstraints, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+NonEmptyString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+MilvusCollectionName = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True,
+        min_length=1,
+        max_length=255,
+        pattern=r"^[A-Za-z_][A-Za-z0-9_]*$",
+    ),
+]
 
 
 @dataclass(frozen=True)
@@ -113,3 +124,77 @@ class RedisSettings(BaseSettings):
     document_cache_ttl_seconds: int = Field(default=300, gt=0, le=86400)
     redis_connect_timeout_seconds: float = Field(default=1.0, gt=0, le=30)
     redis_socket_timeout_seconds: float = Field(default=1.0, gt=0, le=30)
+
+
+class ProcessingSettings(BaseSettings):
+    """控制文本切分窗口，保证重叠区间始终小于目标长度。"""
+
+    model_config = SettingsConfigDict(
+        env_file=Path(__file__).resolve().parents[3] / ".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        validate_default=True,
+    )
+
+    chunk_target_chars: int = Field(default=800, gt=0, le=1_000_000)
+    chunk_max_chars: int = Field(default=1000, gt=0, le=1_000_000)
+    chunk_overlap_chars: int = Field(default=100, ge=0, le=1_000_000)
+
+    @model_validator(mode="after")
+    def validate_chunk_window(self) -> Self:
+        """拒绝无法形成有效 Chunk 滑动窗口的配置。"""
+        if self.chunk_target_chars > self.chunk_max_chars:
+            raise ValueError("CHUNK_TARGET_CHARS must not exceed CHUNK_MAX_CHARS")
+        if self.chunk_overlap_chars >= self.chunk_target_chars:
+            raise ValueError("CHUNK_OVERLAP_CHARS must be smaller than CHUNK_TARGET_CHARS")
+        return self
+
+
+class OcrSettings(BaseSettings):
+    """控制无文本页面的 OCR 回退策略。"""
+
+    model_config = SettingsConfigDict(
+        env_file=Path(__file__).resolve().parents[3] / ".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        validate_default=True,
+    )
+
+    ocr_enabled: bool = True
+    ocr_provider: Literal["paddle"] = "paddle"
+    ocr_device: Literal["cpu", "gpu"] = "cpu"
+    ocr_min_text_chars_per_page: int = Field(default=20, ge=0, le=1_000_000)
+
+
+class EmbeddingSettings(BaseSettings):
+    """描述 Embedding 模型及其输出契约，不在配置阶段加载模型。"""
+
+    model_config = SettingsConfigDict(
+        env_file=Path(__file__).resolve().parents[3] / ".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        validate_default=True,
+    )
+
+    embedding_provider: Literal["bge"] = "bge"
+    embedding_model: NonEmptyString = "BAAI/bge-small-zh-v1.5"
+    embedding_model_path: NonEmptyString = "/models/bge-small-zh-v1.5"
+    embedding_dimension: int = Field(default=512, gt=0, le=65_535)
+    embedding_batch_size: int = Field(default=16, gt=0, le=1024)
+    embedding_device: Literal["cpu", "gpu"] = "cpu"
+
+
+class MilvusSettings(BaseSettings):
+    """从环境变量读取 Milvus 连接与 Collection 配置。"""
+
+    model_config = SettingsConfigDict(
+        env_file=Path(__file__).resolve().parents[3] / ".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        validate_default=True,
+    )
+
+    milvus_uri: AnyHttpUrl = AnyHttpUrl("http://127.0.0.1:19530")
+    milvus_collection: MilvusCollectionName = "document_chunks_v1"
+    milvus_metric_type: Literal["COSINE", "IP", "L2"] = "COSINE"
+    milvus_timeout_seconds: float = Field(default=5.0, gt=0, le=300)

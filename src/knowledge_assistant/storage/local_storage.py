@@ -90,15 +90,30 @@ class LocalDocumentStorage(DocumentStorage):
                             f"File size {file_size} exceeds limit {self.max_file_size}"
                         )
                     dest.write(chunk)
-        except (ValueError, OSError):
+        except (ValueError, OSError) as exc:
             # 确保失败时不留残留文件
-            file_path.unlink(missing_ok=True)
-            raise
+            try:
+                file_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            if isinstance(exc, ValueError):
+                raise
+            raise StorageError(f"Unable to save local object: {object_key}") from exc
 
         return StoredObject(
             object_key=object_key,
             file_size=file_size,
         )
+
+    def read(self, object_key: str) -> bytes:
+        """读取上传目录内的对象，包括合法的空文件。"""
+        file_path = self._resolve_object_path(object_key)
+        try:
+            return file_path.read_bytes()
+        except FileNotFoundError as exc:
+            raise StorageError(f"Local object not found: {object_key}") from exc
+        except OSError as exc:
+            raise StorageError(f"Unable to read local object: {object_key}") from exc
 
     def delete(self, object_key: str) -> None:
         """删除指定对象；对象不存在时不报错（幂等）。
@@ -107,7 +122,10 @@ class LocalDocumentStorage(DocumentStorage):
             object_key: 对象 Key
         """
         file_path = self._resolve_object_path(object_key)
-        file_path.unlink(missing_ok=True)
+        try:
+            file_path.unlink(missing_ok=True)
+        except OSError as exc:
+            raise StorageError(f"Unable to delete local object: {object_key}") from exc
 
     def exists(self, object_key: str) -> bool:
         """判断指定对象是否存在。
@@ -119,4 +137,7 @@ class LocalDocumentStorage(DocumentStorage):
             bool: 对象是否存在
         """
         file_path = self._resolve_object_path(object_key)
-        return file_path.is_file()
+        try:
+            return file_path.is_file()
+        except OSError as exc:
+            raise StorageError(f"Unable to inspect local object: {object_key}") from exc

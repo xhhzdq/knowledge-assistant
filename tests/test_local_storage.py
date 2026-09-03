@@ -38,6 +38,36 @@ def test_save_creates_file(storage):
     assert file_path.read_bytes() == content
 
 
+def test_read_returns_exact_saved_bytes(storage):
+    content = b"binary\x00content\xff"
+    result = storage.save("binary.bin", io.BytesIO(content))
+
+    assert storage.read(result.object_key) == content
+
+
+def test_read_missing_object_raises_storage_error(storage):
+    with pytest.raises(StorageError, match="Local object not found"):
+        storage.read("documents/missing.txt")
+
+
+@pytest.mark.parametrize("object_key", ["../outside.txt", "documents/../../outside.txt"])
+def test_read_rejects_path_outside_upload_directory(storage, object_key):
+    with pytest.raises(StorageError, match="outside the uploads"):
+        storage.read(object_key)
+
+
+def test_read_filesystem_failure_is_converted_to_storage_error(storage, monkeypatch):
+    result = storage.save("guide.txt", io.BytesIO(b"content"))
+
+    def fail_read(_path: Path) -> bytes:
+        raise OSError("disk unavailable")
+
+    monkeypatch.setattr(Path, "read_bytes", fail_read)
+
+    with pytest.raises(StorageError, match="Unable to read local object"):
+        storage.read(result.object_key)
+
+
 def test_save_exceeds_max_size(storage):
     """测试文件大小超过限制时抛出异常。"""
     large_content = b"x" * 2048  # 超过 1024 字节限制
@@ -134,6 +164,7 @@ def test_save_empty_file(storage):
     file_path = storage.upload_dir / result.object_key
     assert file_path.exists()
     assert file_path.read_bytes() == b""
+    assert storage.read(result.object_key) == b""
 
 
 def test_save_large_file_within_limit(storage):

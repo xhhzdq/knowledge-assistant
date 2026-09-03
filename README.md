@@ -108,6 +108,7 @@ knowledge-assistant/
 ├── docs/week01/              # 第一周学习文档
 ├── docs/week02/              # 第二周 Web 与关系数据库文档
 ├── docs/week03/              # 第三周对象存储、缓存和容器文档
+├── docs/week04/              # 第四周文档入库与向量检索计划
 ├── Dockerfile                # FastAPI 应用镜像
 ├── compose.yaml              # API、PostgreSQL、MinIO、Redis 完整编排
 ├── pyproject.toml            # 项目与工具配置
@@ -116,4 +117,6 @@ knowledge-assistant/
 
 ## 当前状态
 
-已完成命令行文档管理、FastAPI 文档 CRUD、PostgreSQL 持久化、SQLAlchemy Repository、Alembic 两次迁移及相应自动化测试。当前只保存文件及元数据，不解析 PDF 正文，也不进行 OCR、Embedding 或向量检索。
+已完成命令行文档管理、FastAPI 文档 CRUD、PostgreSQL 持久化、SQLAlchemy Repository、Alembic 迁移、MinIO 原文件存储、Redis Cache Aside 以及四服务 Docker Compose，并已在 Linux 服务器验收。当前只保存文件及元数据，不解析 PDF 正文，也不进行 OCR、Embedding 或向量检索。
+
+下一阶段见：[第四周文档入库与向量检索计划](docs/week04/README.md)，整体排期见：[七周项目学习与交付计划](docs/七周项目学习与交付计划.md)。

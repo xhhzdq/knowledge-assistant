@@ -2,6 +2,7 @@
 
 from collections.abc import Iterator
 from dataclasses import replace
+from datetime import datetime
 from uuid import uuid4
 
 import pytest
@@ -115,8 +116,10 @@ def test_update_persists_changed_fields(session: Session) -> None:
 
     result = repository.update(changed)
 
-    assert result == changed
-    assert repository.get_by_id(original.id) == changed
+    assert result.name == changed.name
+    assert result.status == changed.status
+    assert datetime.fromisoformat(result.updated_at) > datetime.fromisoformat(original.updated_at)
+    assert repository.get_by_id(original.id) == result
 
 
 def test_update_raises_when_document_is_missing(session: Session) -> None:
