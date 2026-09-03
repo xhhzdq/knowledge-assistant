@@ -19,8 +19,15 @@ PdfPageRenderer = Callable[[bytes, set[int]], Mapping[int, bytes]]
 class OcrProvider(Protocol):
     """Recognize one already-rendered page image without persistence side effects."""
 
-    provider_name: str
-    provider_version: str
+    @property
+    def provider_name(self) -> str:
+        """返回 OCR Provider 名称。"""
+        ...
+
+    @property
+    def provider_version(self) -> str:
+        """返回 OCR Provider 版本。"""
+        ...
 
     def recognize(self, page_image: bytes, page_number: int | None) -> ParsedPage:
         """Return OCR text and confidence for one image."""

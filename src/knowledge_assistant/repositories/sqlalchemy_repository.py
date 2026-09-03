@@ -72,6 +72,25 @@ class SqlAlchemyDocumentRepository:
             raise DocumentNotFoundError(f"Document not found: {document_id}")
         return self._to_domain(row)
 
+    def get_by_id_for_update(self, document_id: str) -> Document:
+        """锁定文档行，供处理服务串行化同一文档的状态切换。"""
+        document_uuid = self._parse_document_id(document_id)
+        statement = select(DocumentORM).where(DocumentORM.id == document_uuid).with_for_update()
+        try:
+            row = self._session.scalar(statement)
+        except SQLAlchemyError as exc:
+            self._session.rollback()
+            logger.exception("锁定文档失败: id=%s", document_id)
+            raise StorageError(f"Unable to lock document: {document_id}") from exc
+        if row is None:
+            self._session.rollback()
+            raise DocumentNotFoundError(f"Document not found: {document_id}")
+        return self._to_domain(row)
+
+    def rollback(self) -> None:
+        """回滚当前事务；幂等流程用它释放只读行锁。"""
+        self._session.rollback()
+
     def add(self, document: Document) -> None:
         """写入文档并提交事务。"""
         row = self._from_domain(document)

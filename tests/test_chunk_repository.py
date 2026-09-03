@@ -135,6 +135,25 @@ def test_pagination_and_count_apply_to_current_chunks(session: Session) -> None:
     assert repository.count(document_id) == 5
 
 
+def test_page_and_processing_version_filters_apply_to_list_and_count(session: Session) -> None:
+    document_id = add_document(session)
+    repository = SqlAlchemyDocumentChunkRepository(session)
+    chunks = [make_chunk(document_id, index, version=2) for index in range(3)]
+    repository.replace_for_document(document_id, chunks)
+
+    page = repository.list_page(
+        document_id,
+        offset=0,
+        limit=20,
+        processing_version=2,
+        page_number=2,
+    )
+
+    assert page == [chunks[1]]
+    assert repository.count(document_id, processing_version=2, page_number=2) == 1
+    assert repository.count(document_id, processing_version=1) == 0
+
+
 def test_get_many_by_ids_rebuilds_input_order_and_skips_missing_rows(session: Session) -> None:
     document_id = add_document(session)
     repository = SqlAlchemyDocumentChunkRepository(session)

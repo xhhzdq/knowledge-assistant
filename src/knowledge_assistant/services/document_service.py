@@ -14,6 +14,7 @@ from knowledge_assistant.exceptions import (
 from knowledge_assistant.models import Document
 from knowledge_assistant.repositories.base import DocumentRepository
 from knowledge_assistant.storage.base import DocumentStorage
+from knowledge_assistant.vectors.base import VectorRepository
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,7 @@ class DocumentService:
         storage: DocumentStorage,
         cache: DocumentCache | None = None,
         cache_ttl_seconds: int = 300,
+        vectors: VectorRepository | None = None,
     ) -> None:
         """初始化文档服务。
 
@@ -37,6 +39,7 @@ class DocumentService:
             storage: 文档原文件存储接口
             cache: 可选的文档详情缓存；CLI 和纯单元测试可以不传
             cache_ttl_seconds: 文档详情缓存的生存时间
+            vectors: 可选的向量仓储，用于删除文档后的外部数据清理
         """
         if cache_ttl_seconds <= 0:
             raise ValueError("cache_ttl_seconds must be greater than zero")
@@ -44,6 +47,7 @@ class DocumentService:
         self._storage = storage
         self._cache = cache
         self._cache_ttl_seconds = cache_ttl_seconds
+        self._vectors = vectors
 
     def add_document(self, source: Path) -> Document:
         """校验本地源文件，并通过存储接口保存原文件和元数据。"""
@@ -138,40 +142,22 @@ class DocumentService:
         self,
         document_id: str,
         *,
-        name: str | None = None,
-        document_status: str | None = None,
+        name: str,
     ) -> Document:
-        """只更新 API 允许修改的名称和状态字段。"""
+        """只更新客户端可修改的文档名称；处理状态由处理服务维护。"""
         document = self._repository.get_by_id(document_id)
-        updated_name = document.name
-        if name is not None:
-            normalized_name = name.strip()
-            if not normalized_name:
-                raise InvalidDocumentError("Document name must not be blank")
-            updated_name = normalized_name
+        normalized_name = name.strip()
+        if not normalized_name:
+            raise InvalidDocumentError("Document name must not be blank")
 
-        updated_status = document.status
-        if document_status is not None:
-            if document_status not in {"uploaded", "processing", "ready", "failed"}:
-                raise InvalidDocumentError(f"Unsupported document status: {document_status}")
-            updated_status = document_status
-
-        if name is None and document_status is None:
-            raise InvalidDocumentError("At least one update field is required")
-
-        updated = self._repository.update(
-            replace(document, name=updated_name, status=updated_status)
-        )
+        updated = self._repository.update(replace(document, name=normalized_name))
         if self._cache is not None:
             self._cache.delete(document_id)
         return updated
 
     def delete_document(self, document_id: str) -> Document:
-        """Delete a stored file and its metadata."""
-        document = self._repository.get_by_id(document_id)
-
-        # 先做一次安全性和可访问性检查。本地存储会在这里拒绝越界路径。
-        self._storage.exists(document.stored_path)
+        """先删除数据库事实来源，再尽最大努力清理外部存储与缓存。"""
+        self._repository.get_by_id(document_id)
         removed = self._repository.delete(document_id)
 
         try:
@@ -183,8 +169,25 @@ class DocumentService:
                 exc,
             )
 
+        if self._vectors is not None:
+            try:
+                self._vectors.delete_by_document_id(document_id)
+            except Exception:
+                logger.warning(
+                    "删除文档后清理 Milvus 向量失败: document_id=%s",
+                    document_id,
+                    exc_info=True,
+                )
+
         if self._cache is not None:
-            self._cache.delete(document_id)
+            try:
+                self._cache.delete(document_id)
+            except Exception:
+                logger.warning(
+                    "删除文档后清理 Redis 缓存失败: document_id=%s",
+                    document_id,
+                    exc_info=True,
+                )
 
         logger.info("文档删除成功: id=%s name=%s", removed.id, removed.name)
         return removed

@@ -1,8 +1,6 @@
 """文档 API 使用的 Pydantic Schema。"""
 
-from typing import Literal
-
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class DocumentResponse(BaseModel):
@@ -34,15 +32,9 @@ class DocumentListResponse(BaseModel):
 class DocumentUpdateRequest(BaseModel):
     """PATCH 接口允许客户端修改的字段。"""
 
-    name: str | None = Field(default=None, min_length=1, max_length=255)
-    status: Literal["uploaded", "processing", "ready", "failed"] | None = None
+    model_config = ConfigDict(extra="forbid")
 
-    @model_validator(mode="after")
-    def require_at_least_one_field(self) -> "DocumentUpdateRequest":
-        """拒绝没有提供任何可更新字段的空请求。"""
-        if self.name is None and self.status is None:
-            raise ValueError("At least one update field is required")
-        return self
+    name: str = Field(min_length=1, max_length=255)
 
 
 class ErrorDetail(BaseModel):

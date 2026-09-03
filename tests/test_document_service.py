@@ -19,6 +19,7 @@ class MemoryDocumentCache:
         self.documents: dict[str, Document] = {}
         self.set_ttls: list[int] = []
         self.deleted_ids: list[str] = []
+        self.fail_delete = False
 
     def get(self, document_id: str) -> Document | None:
         return self.documents.get(document_id)
@@ -30,6 +31,22 @@ class MemoryDocumentCache:
     def delete(self, document_id: str) -> None:
         self.documents.pop(document_id, None)
         self.deleted_ids.append(document_id)
+        if self.fail_delete:
+            raise RuntimeError("simulated Redis failure")
+
+
+class MemoryVectorRepository:
+    """记录文档级向量删除，并可模拟 Milvus 清理失败。"""
+
+    def __init__(self) -> None:
+        self.deleted_document_ids: list[str] = []
+        self.fail_delete = False
+
+    def delete_by_document_id(self, document_id: str) -> int:
+        self.deleted_document_ids.append(document_id)
+        if self.fail_delete:
+            raise RuntimeError("simulated Milvus failure")
+        return 1
 
 
 def build_service(tmp_path: Path) -> DocumentService:
@@ -93,8 +110,8 @@ def test_delete_document_removes_file_and_metadata(tmp_path: Path) -> None:
     assert service.list_documents() == []
 
 
-def test_delete_document_refuses_path_outside_uploads(tmp_path: Path) -> None:
-    """Stored metadata must not be able to delete unrelated local files."""
+def test_delete_document_keeps_outside_file_but_removes_metadata(tmp_path: Path) -> None:
+    """外部文件清理失败不能恢复已删除的数据库事实来源。"""
     source = tmp_path / "source.txt"
     source.write_text("must remain", encoding="utf-8")
     repository = JsonDocumentRepository(tmp_path / "data" / "documents.json")
@@ -108,10 +125,10 @@ def test_delete_document_refuses_path_outside_uploads(tmp_path: Path) -> None:
     repository.delete(document.id)
     repository.add(document)
 
-    with pytest.raises(StorageError, match="outside the uploads"):
-        service.delete_document(document.id)
+    service.delete_document(document.id)
 
     assert source.read_text(encoding="utf-8") == "must remain"
+    assert service.list_documents() == []
 
 
 def test_uploaded_document_cleans_file_when_repository_add_fails(
@@ -216,9 +233,9 @@ def test_update_and_delete_invalidate_document_cache(tmp_path: Path) -> None:
     document = service.add_document(source)
     cache.set(document, ttl_seconds=300)
 
-    updated = service.update_document(document.id, document_status="ready")
+    updated = service.update_document(document.id, name="renamed.txt")
 
-    assert updated.status == "ready"
+    assert updated.name == "renamed.txt"
     assert document.id not in cache.documents
     assert cache.deleted_ids == [document.id]
 
@@ -227,3 +244,32 @@ def test_update_and_delete_invalidate_document_cache(tmp_path: Path) -> None:
 
     assert document.id not in cache.documents
     assert cache.deleted_ids == [document.id, document.id]
+
+
+def test_delete_cleans_vectors_and_tolerates_external_cleanup_failures(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """数据库删除成功后，MinIO/Milvus 失败只记录告警且不会恢复文档。"""
+    source = tmp_path / "cleanup.txt"
+    source.write_text("cleanup", encoding="utf-8")
+    repository = JsonDocumentRepository(tmp_path / "data" / "documents.json")
+    storage = LocalDocumentStorage(tmp_path / "data" / "uploads")
+    cache = MemoryDocumentCache()
+    vectors = MemoryVectorRepository()
+    service = DocumentService(repository, storage, cache=cache, vectors=vectors)
+    document = service.add_document(source)
+    vectors.fail_delete = True
+    cache.fail_delete = True
+
+    def fail_storage_delete(*args: object) -> None:
+        raise StorageError("simulated MinIO failure")
+
+    monkeypatch.setattr(storage, "delete", fail_storage_delete)
+
+    removed = service.delete_document(document.id)
+
+    assert removed.id == document.id
+    assert repository.list_all() == []
+    assert vectors.deleted_document_ids == [document.id]
+    assert cache.deleted_ids == [document.id]

@@ -39,3 +39,15 @@ class OcrError(KnowledgeAssistantError):
 
 class EmbeddingError(KnowledgeAssistantError):
     """Raised when an embedding model cannot load or returns invalid vectors."""
+
+
+class VectorStoreError(KnowledgeAssistantError):
+    """向量库不可用、Schema 不兼容或向量操作失败。"""
+
+
+class ProcessingInProgressError(KnowledgeAssistantError):
+    """同一文档已有一个处理流程正在执行。"""
+
+
+class DocumentProcessingError(KnowledgeAssistantError):
+    """文档处理遇到未归类的内部错误。"""

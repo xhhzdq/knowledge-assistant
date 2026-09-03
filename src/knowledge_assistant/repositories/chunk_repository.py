@@ -8,6 +8,7 @@ from uuid import UUID
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
+from sqlalchemy.sql.elements import ColumnElement
 
 from knowledge_assistant.db.models import DocumentChunkORM
 from knowledge_assistant.exceptions import DocumentConflictError, StorageError
@@ -19,15 +20,35 @@ logger = logging.getLogger(__name__)
 class DocumentChunkRepository(Protocol):
     """Persistence operations required by processing and search services."""
 
-    def replace_for_document(self, document_id: str, chunks: list[TextChunk]) -> None:
-        """Atomically replace all chunks currently stored for a document."""
+    def replace_for_document(
+        self,
+        document_id: str,
+        chunks: list[TextChunk],
+        *,
+        commit: bool = True,
+    ) -> None:
+        """替换文档 Chunk；``commit=False`` 时由同一 Session 的外层事务提交。"""
         ...
 
-    def list_page(self, document_id: str, offset: int, limit: int) -> list[TextChunk]:
+    def list_page(
+        self,
+        document_id: str,
+        offset: int,
+        limit: int,
+        *,
+        processing_version: int | None = None,
+        page_number: int | None = None,
+    ) -> list[TextChunk]:
         """Return current chunks ordered by their stable chunk index."""
         ...
 
-    def count(self, document_id: str) -> int:
+    def count(
+        self,
+        document_id: str,
+        *,
+        processing_version: int | None = None,
+        page_number: int | None = None,
+    ) -> int:
         """Count the current chunks for one document."""
         ...
 
@@ -46,7 +67,14 @@ class SqlAlchemyDocumentChunkRepository:
     def __init__(self, session: Session) -> None:
         self._session = session
 
-    def replace_for_document(self, document_id: str, chunks: list[TextChunk]) -> None:
+    def replace_for_document(
+        self,
+        document_id: str,
+        chunks: list[TextChunk],
+        *,
+        commit: bool = True,
+    ) -> None:
+        """替换文档 Chunk，并可把提交动作交给处理服务的文档状态更新。"""
         document_uuid = self._parse_uuid(document_id, "document_id")
         rows: list[DocumentChunkORM] = []
         for chunk in chunks:
@@ -59,7 +87,8 @@ class SqlAlchemyDocumentChunkRepository:
                 delete(DocumentChunkORM).where(DocumentChunkORM.document_id == document_uuid)
             )
             self._session.add_all(rows)
-            self._session.commit()
+            if commit:
+                self._session.commit()
         except IntegrityError as exc:
             self._session.rollback()
             logger.warning("Chunk 数据违反数据库约束: document_id=%s", document_id)
@@ -71,17 +100,21 @@ class SqlAlchemyDocumentChunkRepository:
             logger.exception("替换文档 Chunk 失败: document_id=%s", document_id)
             raise StorageError(f"Unable to replace document chunks: {document_id}") from exc
 
-    def list_page(self, document_id: str, offset: int, limit: int) -> list[TextChunk]:
+    def list_page(
+        self,
+        document_id: str,
+        offset: int,
+        limit: int,
+        *,
+        processing_version: int | None = None,
+        page_number: int | None = None,
+    ) -> list[TextChunk]:
         if offset < 0 or limit <= 0:
             raise ValueError("offset must be non-negative and limit must be positive")
         document_uuid = self._parse_uuid(document_id, "document_id")
-        statement = (
-            select(DocumentChunkORM)
-            .where(DocumentChunkORM.document_id == document_uuid)
-            .order_by(DocumentChunkORM.chunk_index)
-            .offset(offset)
-            .limit(limit)
-        )
+        filters = self._filters(document_uuid, processing_version, page_number)
+        statement = select(DocumentChunkORM).where(*filters)
+        statement = statement.order_by(DocumentChunkORM.chunk_index).offset(offset).limit(limit)
         try:
             rows = self._session.scalars(statement).all()
         except SQLAlchemyError as exc:
@@ -89,17 +122,43 @@ class SqlAlchemyDocumentChunkRepository:
             raise StorageError(f"Unable to list document chunks: {document_id}") from exc
         return [self._to_domain(row) for row in rows]
 
-    def count(self, document_id: str) -> int:
+    def count(
+        self,
+        document_id: str,
+        *,
+        processing_version: int | None = None,
+        page_number: int | None = None,
+    ) -> int:
         document_uuid = self._parse_uuid(document_id, "document_id")
-        statement = select(func.count()).select_from(DocumentChunkORM).where(
-            DocumentChunkORM.document_id == document_uuid
-        )
+        filters = self._filters(document_uuid, processing_version, page_number)
+        statement = select(func.count()).select_from(DocumentChunkORM).where(*filters)
         try:
             total = self._session.scalar(statement)
         except SQLAlchemyError as exc:
             logger.exception("统计文档 Chunk 失败: document_id=%s", document_id)
             raise StorageError(f"Unable to count document chunks: {document_id}") from exc
         return total or 0
+
+    @staticmethod
+    def _filters(
+        document_id: UUID,
+        processing_version: int | None,
+        page_number: int | None,
+    ) -> list[ColumnElement[bool]]:
+        """构造版本与页码相交过滤条件，供列表和计数保持一致。"""
+        filters: list[ColumnElement[bool]] = [DocumentChunkORM.document_id == document_id]
+        if processing_version is not None:
+            filters.append(DocumentChunkORM.processing_version == processing_version)
+        if page_number is not None:
+            filters.extend(
+                [
+                    DocumentChunkORM.page_start.is_not(None),
+                    DocumentChunkORM.page_end.is_not(None),
+                    DocumentChunkORM.page_start <= page_number,
+                    DocumentChunkORM.page_end >= page_number,
+                ]
+            )
+        return filters
 
     def get_many_by_ids(self, chunk_ids: list[str]) -> list[TextChunk]:
         if not chunk_ids:

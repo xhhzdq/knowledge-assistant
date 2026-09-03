@@ -40,7 +40,9 @@ flowchart LR
 3. `api` 等待 `milvus` 健康后再启动；
 4. `api` 通过 Compose 内部 DNS 名称 `milvus:19530` 访问，不走宿主机端口。
 
-`etcd`、`milvus`、`api`、`minio` 之间还连接到 `vector-backend` 内部网络。etcd 完全不映射宿主机端口；Milvus 只将 19530 绑定到 `${COMPOSE_BIND_ADDRESS:-127.0.0.1}`，因此默认不能从公网直接访问。
+`etcd`、`milvus`、`api`、`minio` 之间还连接到 `vector-backend` 内部网络。etcd 完全不映射宿主机端口。Milvus 同时加入默认桥接网络，使宿主机回环端口和 SSH 隧道能够抵达容器；19530 仍只绑定到 `${COMPOSE_BIND_ADDRESS:-127.0.0.1}`，因此默认不能从公网直接访问。
+
+不能让 Milvus 只加入 `internal: true` 的网络。Docker 的内部网络不连接宿主机接口，这会导致本机虽然能够建立 SSH 隧道监听，但服务器端转发到 `127.0.0.1:19530` 时被拒绝。
 
 ## 3. 数据持久化与第三周数据保护
 
@@ -153,6 +155,81 @@ Collection 名为 `document_chunks_v1`：
 - 更换模型或维度时新建 Collection 版本，不能把不同维度向量混写到同一个 Collection。
 
 本任务不会提前创建 Collection。任务 11 的 Repository 会幂等创建并检查已有 Collection 的维度和 Metric，防止错误配置悄悄污染向量数据。
+
+### 7.1 Repository 调用流程
+
+任务 11 新增三层对象：
+
+| 对象 | 作用 |
+| --- | --- |
+| `VectorRecord` | Service 交给向量库的 Chunk ID、文档 ID、版本、页码和向量 |
+| `VectorSearchHit` | Milvus 返回给 Search Service 的主键、过滤字段和相似度 |
+| `VectorRepository` | 隔离业务层与 pymilvus SDK 的抽象接口 |
+
+`MilvusVectorRepository` 是该接口的适配器。业务 Service 不需要了解 Collection Schema、Milvus 过滤表达式和 SDK 返回字典的结构。
+
+```mermaid
+flowchart TD
+    Caller[Processing/Search Service] --> Model[VectorRecord 或查询向量]
+    Model --> Repo[MilvusVectorRepository]
+    Repo --> Ensure{本进程已确认 Collection?}
+    Ensure -->|否| Exists{Collection 存在?}
+    Exists -->|否| Create[创建显式 Schema 和 AUTOINDEX]
+    Exists -->|是| Validate[读取 Schema 和 Index]
+    Create --> Validate
+    Validate --> Contract{512 维且 COSINE?}
+    Contract -->|否| Error[抛出 VectorStoreError]
+    Contract -->|是| Operation[执行 upsert/search/delete]
+    Ensure -->|是| Operation
+    Operation --> SDK[pymilvus MilvusClient]
+    SDK --> Milvus[(document_chunks_v1)]
+    SDK -->|MilvusException| Error
+```
+
+Collection 校验在每个 Repository 实例的第一次有效操作时执行，成功后在进程内缓存结果。锁保证同一进程的并发请求不会重复初始化；多个进程同时创建时，失败的一方会再次检查 Collection，随后仍以 Schema 校验结果为准。
+
+### 7.2 Upsert 流程
+
+```text
+Sequence[VectorRecord]
+  -> 校验 UUID、处理版本、页码、512 维有限数值
+  -> 按 chunk_id 去重，同批重复时保留最后一条
+  -> 每 100 条调用一次 MilvusClient.upsert
+  -> 相同 chunk_id 在 Milvus 中覆盖，不增加重复主键
+```
+
+这里选择 `upsert` 而不是 `insert`，因为文档强制重新处理、失败重试或接口重放时可能再次写入同一个 Chunk。主键相同就更新，使重复调用具备幂等性。
+
+### 7.3 Search 流程
+
+```mermaid
+sequenceDiagram
+    participant S as Search Service
+    participant R as MilvusVectorRepository
+    participant M as Milvus
+    participant P as PostgreSQL
+
+    S->>R: search(query_vector, top_k, document_ids)
+    R->>R: 校验 512 维向量和 UUID
+    R->>R: 构造 document_id in [...] 过滤表达式
+    R->>M: COSINE search + output_fields
+    M-->>R: 按相似度排序的主键与标量字段
+    R-->>S: list[VectorSearchHit]
+    S->>P: 按 chunk_id 回查正文
+    P-->>S: 有效 Chunk 内容
+```
+
+Repository 保持 Milvus 的排序，不在 Python 中重新计算距离。Milvus 只返回用于定位正文的标量字段；真正的 Chunk 内容仍从 PostgreSQL 获取，因此数据库删除或版本变化后可以过滤陈旧向量。
+
+### 7.4 Delete 流程
+
+- `delete_by_chunk_ids` 直接使用主键列表删除，并先去重；
+- `delete_by_document_id` 在 UUID 校验后生成精确过滤表达式；
+- 空 Chunk ID 列表直接返回 0，不创建连接；
+- SDK 返回的 `delete_count` 统一转成整数；
+- SDK 的 `MilvusException` 对业务层统一表现为 `VectorStoreError`。
+
+这种异常转换使任务 12 只处理项目自己的异常，不依赖 pymilvus 的异常类和错误码。
 
 ## 8. 部署和验证
 

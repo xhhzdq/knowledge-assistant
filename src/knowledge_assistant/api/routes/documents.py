@@ -104,7 +104,7 @@ def get_document(
     "/{document_id}",
     response_model=DocumentResponse,
     responses={
-        status.HTTP_400_BAD_REQUEST: {"description": "名称或状态参数无效"},
+        status.HTTP_400_BAD_REQUEST: {"description": "名称参数无效"},
         status.HTTP_404_NOT_FOUND: {"description": "文档不存在"},
     },
 )
@@ -113,12 +113,11 @@ def update_document(
     payload: DocumentUpdateRequest,
     service: DocumentServiceDependency,
 ) -> DocumentResponse:
-    """更新文档名称或状态，并处理 404 与参数校验错误。"""
+    """只更新文档名称；文档状态只能由处理服务维护。"""
     try:
         document = service.update_document(
             document_id,
             name=payload.name,
-            document_status=payload.status,
         )
     except DocumentNotFoundError as exc:
         raise HTTPException(

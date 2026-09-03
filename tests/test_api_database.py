@@ -1,8 +1,11 @@
 """文档 API 连接真实 PostgreSQL 测试库的集成测试。"""
 
 from collections.abc import Iterator
+from datetime import UTC, datetime
+from hashlib import sha256
 from pathlib import Path
 from shutil import rmtree
+from uuid import UUID, uuid4
 
 import pytest
 from alembic import command
@@ -14,9 +17,11 @@ from sqlalchemy.engine import make_url
 from knowledge_assistant.api.dependencies import get_document_service
 from knowledge_assistant.api.main import app
 from knowledge_assistant.core.config import DatabaseSettings
-from knowledge_assistant.db.models import DocumentORM
+from knowledge_assistant.db.models import DocumentChunkORM, DocumentORM
 from knowledge_assistant.db.session import create_session_factory
 from knowledge_assistant.exceptions import DocumentNotFoundError
+from knowledge_assistant.processing.models import TextChunk
+from knowledge_assistant.repositories.chunk_repository import SqlAlchemyDocumentChunkRepository
 from knowledge_assistant.repositories.sqlalchemy_repository import (
     SqlAlchemyDocumentRepository,
 )
@@ -147,6 +152,44 @@ def test_document_http_lifecycle_uses_postgresql(
             SqlAlchemyDocumentRepository(session).get_by_id(uploaded["id"])
 
 
+def test_delete_document_cascades_current_chunks(
+    database_api_environment: tuple[TestClient, Engine, Path],
+) -> None:
+    """删除 Document 后，PostgreSQL 外键级联删除它的全部 Chunk。"""
+    client, engine, _ = database_api_environment
+    upload = client.post(
+        "/api/v1/documents",
+        files={"file": ("cascade.txt", b"cascade", "text/plain")},
+    )
+    document_id = upload.json()["id"]
+    text_content = "待级联删除的正文"
+    chunk = TextChunk(
+        id=str(uuid4()),
+        document_id=document_id,
+        processing_version=1,
+        chunk_index=0,
+        content=text_content,
+        content_hash=sha256(text_content.encode()).hexdigest(),
+        char_start=0,
+        char_end=len(text_content),
+        page_start=None,
+        page_end=None,
+        source_type="parser",
+        ocr_confidence=None,
+        token_count=5,
+        created_at=datetime.now(UTC),
+    )
+    session_factory = create_session_factory(engine)
+    with session_factory() as session:
+        SqlAlchemyDocumentChunkRepository(session).replace_for_document(document_id, [chunk])
+
+    response = client.delete(f"/api/v1/documents/{document_id}")
+
+    assert response.status_code == 204
+    with session_factory() as session:
+        assert session.get(DocumentChunkORM, UUID(chunk.id)) is None
+
+
 def test_upload_rejects_unsupported_file_type(
     database_api_environment: tuple[TestClient, Engine, Path],
 ) -> None:
@@ -177,10 +220,10 @@ def test_database_api_returns_404_for_missing_document(
     assert client.delete(f"/api/v1/documents/{missing_id}").status_code == 404
 
 
-def test_patch_document_updates_name_and_status(
+def test_patch_document_only_updates_name(
     database_api_environment: tuple[TestClient, Engine, Path],
 ) -> None:
-    """PATCH 可更新文档名称或状态，并对不存在的文档返回 404。"""
+    """PATCH 只允许更新名称，并对不存在的文档返回 404。"""
     client, _, _ = database_api_environment
 
     # 先上传一个文档
@@ -199,28 +242,25 @@ def test_patch_document_updates_name_and_status(
     assert response.status_code == 200
     assert response.json()["name"] == "updated.txt"
 
-    # 更新状态
+    # 客户端不能伪造处理状态
     response = client.patch(
         f"/api/v1/documents/{document_id}",
         json={"status": "ready"},
     )
-    assert response.status_code == 200
-    assert response.json()["status"] == "ready"
+    assert response.status_code == 422
 
-    # 同时更新名称和状态
+    # 即使同时提供合法名称，额外的 status 仍会被拒绝
     response = client.patch(
         f"/api/v1/documents/{document_id}",
         json={"name": "renamed.txt", "status": "failed"},
     )
-    assert response.status_code == 200
-    assert response.json()["name"] == "renamed.txt"
-    assert response.json()["status"] == "failed"
+    assert response.status_code == 422
 
     # 不存在的文档 → 404
     missing_id = "9d4ac41e-f47e-4f06-9954-6fcf01d21111"
     response = client.patch(
         f"/api/v1/documents/{missing_id}",
-        json={"status": "ready"},
+        json={"name": "missing.txt"},
     )
     assert response.status_code == 404
 
@@ -231,9 +271,6 @@ def test_patch_document_updates_name_and_status(
     )
     assert response.status_code == 422
 
-    # 无效状态 → 400
-    response = client.patch(
-        f"/api/v1/documents/{document_id}",
-        json={"status": "invalid"},
-    )
+    # 空对象缺少必填名称
+    response = client.patch(f"/api/v1/documents/{document_id}", json={})
     assert response.status_code == 422
