@@ -1,6 +1,7 @@
 FROM python:3.11-slim
 
 ARG PIP_INDEX_URL=https://pypi.org/simple
+ARG PYTORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -11,9 +12,11 @@ WORKDIR /app
 # 先复制依赖声明，业务代码变化时可以复用依赖安装层缓存。
 COPY pyproject.toml README.md ./
 COPY src ./src
-# PIP_INDEX_URL 可由 Compose 的 .env 覆盖，解决服务器无法直连 PyPI 的问题。
-# 使用 ARG 而非 ENV，避免把构建阶段的镜像地址带入最终运行环境。
+# 服务器使用 CPU 推理。先从 PyTorch CPU 专用源安装 torch，避免
+# sentence-transformers 从普通 PyPI 镜像解析出体积很大的 CUDA 依赖。
+# 两个下载地址都只在构建阶段使用，不写入最终容器环境。
 RUN python -m pip install --index-url "$PIP_INDEX_URL" --upgrade pip \
+    && python -m pip install --index-url "$PYTORCH_INDEX_URL" torch \
     && python -m pip install --index-url "$PIP_INDEX_URL" ".[embedding,ocr]"
 
 # Alembic 在容器中执行迁移时需要这些文件。
