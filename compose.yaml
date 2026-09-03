@@ -177,6 +177,7 @@ services:
         condition: service_healthy
     restart: unless-stopped
     networks:
+      - default
       - vector-backend
 
   # 一次性迁移任务。只有升级成功，API 才会启动。
